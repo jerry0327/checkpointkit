@@ -43,7 +43,7 @@ def read_project_version(root: Path) -> str:
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         raise ReleaseMetadataError("pyproject.toml has no valid project.version") from exc
     if not isinstance(version, str) or not version.strip():
-        raise ReleaseMetadataError,"pyproject.toml project.version must be a non-empty string")
+        raise ReleaseMetadataError("pyproject.toml project.version must be a non-empty string")
     return version.strip()
 
 
@@ -90,7 +90,7 @@ def load_release_metadata(root: Path) -> ReleaseMetadata:
     package_version = read_package_version(root)
     intent = read_release_intent(root)
     if len({project_version, package_version, intent}) != 1:
-        raise ReleaseMetadataError,
+        raise ReleaseMetadataError(
             "Release versions disagree: "
             f"pyproject={project_version!r}, package={package_version!r}, intent={intent!r}"
         )
