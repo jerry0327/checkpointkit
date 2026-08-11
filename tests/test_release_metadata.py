@@ -21,8 +21,8 @@ def test_repository_release_metadata_is_aligned():
     assert "crash-and-resume" in metadata.changelog
     notes = render_release_notes(metadata)
     assert "SHA256SUMS" in notes
-    assert "build provenance attestations" in notes
-    assert "cross-platform test and crash-recovery matrices" in notes
+    assert "OIDC/Sigstore" in metadata.changelog
+    assert "Local-file coordination" in notes
 
 
 def test_release_metadata_rejects_version_disagreement(tmp_path):
@@ -67,4 +67,4 @@ def test_render_release_notes_handles_stable_version():
     notes = render_release_notes(metadata)
     assert notes.startswith("# CheckpointKit v1.0.0")
     assert "- stable" in notes
-    assert "gh release verify v1.0.0" in notes
+    assert "Local-file coordination" in notes
