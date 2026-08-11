@@ -1,33 +1,37 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "checkpointkit"
-version = "0.1.0a0"
+version = "0.1.0a1"
 description = "Fault-tolerant checkpointing and resume toolkit for long-running AI, data, and batch jobs."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{name = "CheckpointKit contributors"}]
 keywords = ["checkpoint", "resume", "batch", "recovery", "ai", "data-pipeline"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: System :: Recovery Tools",
+  "Typing :: Typed",
 ]
 
 [project.urls]
 Homepage = "https://github.com/jerry0327/checkpointkit"
+Documentation = "https://github.com/jerry0327/checkpointkit/tree/main/docs"
 Issues = "https://github.com/jerry0327/checkpointkit/issues"
+Changelog = "https://github.com/jerry0327/checkpointkit/blob/main/CHANGELOG.md"
 Repository = "https://github.com/jerry0327/checkpointkit"
 
 [project.scripts]
@@ -37,15 +41,29 @@ checkpointkit = "checkpointkit.cli:main"
 dev = [
   "build>=1.2",
   "pytest>=8.0",
+  "pytest-cov>=5.0",
   "ruff>=0.6",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+checkpointkit = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["checkpointkit"]
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 target-version = "py310"
