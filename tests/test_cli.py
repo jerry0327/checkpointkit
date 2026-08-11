@@ -24,10 +24,56 @@ def test_cli_run_status_and_list(tmp_path, capsys):
     assert main(["status", "--name", "demo", "--state-dir", str(state_dir)]) == 0
     output = capsys.readouterr().out
     assert "status: completed" in output
+    assert "generation: 2" in output
 
     assert main(["list", "--state-dir", str(state_dir), "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert listed[0]["name"] == "demo"
+    assert listed[0]["generation"] == 2
+
+
+def test_cli_forwards_lock_timeout_to_run_and_resume(monkeypatch):
+    observed = {}
+
+    def fake_run(name, command, *, state_dir, cwd, force, lock_timeout):
+        observed["run"] = (name, command, state_dir, cwd, force, lock_timeout)
+        return 0
+
+    def fake_resume(name, *, state_dir, force, lock_timeout):
+        observed["resume"] = (name, state_dir, force, lock_timeout)
+        return 0
+
+    monkeypatch.setattr("checkpointkit.cli.run_command", fake_run)
+    monkeypatch.setattr("checkpointkit.cli.resume_command", fake_resume)
+
+    assert main(
+        [
+            "run",
+            "--name",
+            "demo",
+            "--state-dir",
+            "state",
+            "--lock-timeout",
+            "0.25",
+            "--",
+            "python",
+            "job.py",
+        ]
+    ) == 0
+    assert observed["run"][-1] == 0.25
+
+    assert main(
+        [
+            "resume",
+            "--name",
+            "demo",
+            "--state-dir",
+            "state",
+            "--lock-timeout",
+            "1.5",
+        ]
+    ) == 0
+    assert observed["resume"][-1] == 1.5
 
 
 def test_cli_verify_json_and_exact(tmp_path, capsys):
@@ -97,6 +143,7 @@ def test_cli_status_json_and_human_list(tmp_path, capsys):
     ) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "completed"
+    assert payload["generation"] == 2
 
     assert main(["list", "--state-dir", str(state_dir)]) == 0
     assert "json-demo\tcompleted\t1 attempt(s)" in capsys.readouterr().out

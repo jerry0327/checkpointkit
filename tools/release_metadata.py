@@ -110,8 +110,10 @@ def render_release_notes(metadata: ReleaseMetadata) -> str:
         "This release attaches a Python wheel, a source distribution, and `SHA256SUMS`. "
         "It was created only after the corresponding `main` commit passed the repository's "
         "lint, cross-platform test, coverage, and package-install gates.\n\n"
-        "CheckpointKit remains application/workflow-level recovery software. The local backend "
-        "is single-writer, and durable formats remain pre-1.0.\n"
+        "CheckpointKit remains application/workflow-level recovery software. Local-file "
+        "coordination covers cooperating processes on tested ordinary local filesystems via "
+        "advisory OS locks and generation checks. Distributed/network-filesystem coordination "
+        "and exactly-once external side effects remain outside the guarantee.\n"
     )
 
 

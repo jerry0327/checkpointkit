@@ -15,5 +15,9 @@ class StateConflictError(CheckpointKitError):
     """Raised when an operation conflicts with already recorded state."""
 
 
+class LockTimeoutError(StateConflictError):
+    """Raised when a local durable-state lock cannot be acquired in time."""
+
+
 class UnsafePathError(StateValidationError):
     """Raised when a manifest path is unsafe or escapes its declared base."""
