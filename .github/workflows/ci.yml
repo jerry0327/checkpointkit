@@ -28,7 +28,7 @@ jobs:
       - name: Ruff
         run: ruff check .
       - name: Compile
-        run: python -m compileall -q src tests examples
+        run: python -m compileall -q src tests examples tools
 
   test:
     name: test (${{ matrix.os }}, Python ${{ matrix.python-version }})

@@ -20,15 +20,21 @@ pytest --cov=checkpointkit --cov-report=term-missing --cov-branch
 python -m build
 ```
 
-## Tagging
+## Release intent and automated tagging
 
-Pre-release tags use the normalized project version:
+A release requires one explicit repository intent file:
 
 ```text
-v0.1.0a1
+release/intent.txt
 ```
 
-The tag must point to a green commit on `main`. Release notes should summarize user-visible changes, compatibility impact, known limitations, and exact verification commands. Do not claim adoption, download counts, or platform guarantees that are not supported by public evidence.
+It must contain exactly the same version as `pyproject.toml`, `checkpointkit.__version__`, and a non-empty `CHANGELOG.md` section. After `main` CI succeeds, the `Release` workflow revalidates all four inputs, confirms that the successful commit is still the current `main`, builds the distributions, writes `SHA256SUMS`, and creates the tag and GitHub release.
+
+Pre-release tags use the normalized project version, for example `v0.1.0a1`. The workflow skips an existing tag rather than replacing it. Release notes are generated from the matching changelog section and include the project boundaries. Do not claim adoption, download counts, or platform guarantees that are not supported by public evidence.
+
+## Workflow security boundary
+
+The release workflow runs only after a successful `push` CI event on `main`, checks out that exact commit, and refuses to publish if `main` has advanced. It has `contents: write` permission solely to create the immutable tag and GitHub release. Pull-request CI runs cannot publish.
 
 ## Package publishing
 
