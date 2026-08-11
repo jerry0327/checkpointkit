@@ -1,28 +1,45 @@
 import json
+import multiprocessing
 
 import pytest
 
 import checkpointkit.store as store_module
-from checkpointkit import CheckpointStore, StateValidationError
+from checkpointkit import CheckpointStore, StateConflictError, StateValidationError
 
 
-def test_mark_complete_is_idempotent(tmp_path):
+def _mark_items(path, keys):
+    store = CheckpointStore(path, lock_timeout=5.0)
+    for key in keys:
+        store.mark_complete(key, {"writer": key})
+
+
+def test_mark_complete_is_idempotent_and_generation_tracks_changes(tmp_path):
     store = CheckpointStore(tmp_path / "state.json")
+    assert store.load()["generation"] == 0
+
     store.mark_complete("a")
+    assert store.load()["generation"] == 1
     store.mark_complete("a")
+    assert store.load()["generation"] == 1
     store.mark_complete("b", {"rows": 12})
 
+    payload = store.load()
+    assert payload["generation"] == 2
     assert store.completed_count() == 2
     assert store.is_complete("a")
     assert store.completed_keys() == ("a", "b")
-    assert store.load()["item_metadata"]["b"] == {"rows": 12}
+    assert payload["item_metadata"]["b"] == {"rows": 12}
 
 
-def test_set_metadata_persists(tmp_path):
+def test_set_metadata_persists_without_incrementing_on_noop(tmp_path):
     store = CheckpointStore(tmp_path / "state.json")
     store.set_metadata(model="example", shard=3)
+    first = store.load()
+    assert first["metadata"] == {"model": "example", "shard": 3}
+    assert first["generation"] == 1
 
-    assert store.load()["metadata"] == {"model": "example", "shard": 3}
+    store.set_metadata(model="example", shard=3)
+    assert store.load()["generation"] == 1
 
 
 def test_mark_incomplete_and_pending_keys(tmp_path):
@@ -35,6 +52,76 @@ def test_mark_incomplete_and_pending_keys(tmp_path):
     assert store.mark_incomplete("a") is False
     assert store.pending_keys(["a", "b", "c"]) == ("a", "c")
     assert "a" not in store.load()["item_metadata"]
+    assert store.load()["generation"] == 3
+
+
+def test_two_stale_snapshots_cannot_both_commit(tmp_path):
+    store = CheckpointStore(tmp_path / "state.json")
+    store.mark_complete("base")
+    first = store.load()
+    stale = store.load()
+
+    first["metadata"]["winner"] = 1
+    saved = store.save(first)
+    assert saved["generation"] == 2
+
+    stale["metadata"]["loser"] = 2
+    before = store.path.read_text(encoding="utf-8")
+    with pytest.raises(StateConflictError, match=r"expected 1, found 2"):
+        store.save(stale)
+
+    assert store.path.read_text(encoding="utf-8") == before
+    assert list(tmp_path.glob(".state.json.*.tmp")) == []
+    assert store.load()["metadata"] == {"winner": 1}
+
+
+def test_explicit_expected_generation_is_enforced(tmp_path):
+    store = CheckpointStore(tmp_path / "state.json")
+    payload = store.load()
+    payload["metadata"]["value"] = 1
+    saved = store.save(payload, expected_generation=0)
+    assert saved["generation"] == 1
+
+    with pytest.raises(StateConflictError, match="generation conflict"):
+        store.save(saved, expected_generation=0)
+
+
+def test_legacy_schema_one_without_generation_is_lazy_upgraded(tmp_path):
+    store = CheckpointStore(tmp_path / "state.json")
+    legacy = store.load()
+    legacy.pop("generation")
+    original = json.dumps(legacy, sort_keys=True)
+    store.path.write_text(original, encoding="utf-8")
+
+    loaded = store.load()
+    assert loaded["generation"] == 0
+    assert store.path.read_text(encoding="utf-8") == original
+
+    store.set_metadata(upgraded=True)
+    upgraded = json.loads(store.path.read_text(encoding="utf-8"))
+    assert upgraded["schema_version"] == 1
+    assert upgraded["generation"] == 1
+    assert upgraded["metadata"] == {"upgraded": True}
+
+
+def test_cooperating_processes_do_not_lose_item_progress(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    path = tmp_path / "state.json"
+    groups = [["a", "b"], ["c", "d"], ["e", "f"], ["g", "h"]]
+    processes = [context.Process(target=_mark_items, args=(path, group)) for group in groups]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(10.0)
+        if process.is_alive():
+            process.terminate()
+            process.join(5.0)
+        assert process.exitcode == 0
+
+    payload = CheckpointStore(path).load()
+    assert set(payload["completed"]) == set("abcdefgh")
+    assert payload["generation"] == 8
 
 
 def test_invalid_json_is_rejected_with_location(tmp_path):
@@ -45,7 +132,7 @@ def test_invalid_json_is_rejected_with_location(tmp_path):
         CheckpointStore(path).load()
 
 
-def test_unsupported_schema_and_invalid_fields_are_rejected(tmp_path):
+def test_unsupported_schema_invalid_generation_and_fields_are_rejected(tmp_path):
     store = CheckpointStore(tmp_path / "state.json")
     payload = store.load()
     payload["schema_version"] = 999
@@ -55,6 +142,12 @@ def test_unsupported_schema_and_invalid_fields_are_rejected(tmp_path):
         store.load()
 
     payload["schema_version"] = 1
+    payload["generation"] = True
+    store.path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(StateValidationError, match="generation.*integer"):
+        store.load()
+
+    payload["generation"] = 0
     payload["completed"] = ["a", "a"]
     store.path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(StateValidationError, match="duplicates"):

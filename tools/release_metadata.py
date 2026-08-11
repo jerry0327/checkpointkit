@@ -43,7 +43,7 @@ def read_project_version(root: Path) -> str:
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         raise ReleaseMetadataError("pyproject.toml has no valid project.version") from exc
     if not isinstance(version, str) or not version.strip():
-        raise ReleaseMetadataError("pyproject.toml project.version must be a non-empty string")
+        raise ReleaseMetadataError,"pyproject.toml project.version must be a non-empty string")
     return version.strip()
 
 
@@ -90,7 +90,7 @@ def load_release_metadata(root: Path) -> ReleaseMetadata:
     package_version = read_package_version(root)
     intent = read_release_intent(root)
     if len({project_version, package_version, intent}) != 1:
-        raise ReleaseMetadataError(
+        raise ReleaseMetadataError,
             "Release versions disagree: "
             f"pyproject={project_version!r}, package={package_version!r}, intent={intent!r}"
         )
@@ -110,8 +110,10 @@ def render_release_notes(metadata: ReleaseMetadata) -> str:
         "This release attaches a Python wheel, a source distribution, and `SHA256SUMS`. "
         "It was created only after the corresponding `main` commit passed the repository's "
         "lint, cross-platform test, coverage, and package-install gates.\n\n"
-        "CheckpointKit remains application/workflow-level recovery software. The local backend "
-        "is single-writer, and durable formats remain pre-1.0.\n"
+        "CheckpointKit remains application/workflow-level recovery software. Local-file "
+        "coordination covers cooperating processes on tested ordinary local filesystems via "
+        "advisory OS locks and generation checks. Distributed/network-filesystem coordination "
+        "and exactly-once external side effects remain outside the guarantee.\n"
     )
 
 

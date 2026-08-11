@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from ._validation import (
     load_json_object,
+    require_integer,
     require_list,
     require_mapping,
     require_string,
     require_timestamp,
 )
-from .errors import StateValidationError
+from .errors import StateConflictError, StateValidationError
+from .locking import FileLock, lock_path_for
 
 SCHEMA_VERSION = 1
 _CHECKPOINT_KIND = "checkpoint"
+_T = TypeVar("_T")
 
 
 def _now() -> str:
@@ -77,14 +81,29 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+def _generation(payload: dict[str, Any]) -> int:
+    return require_integer(
+        payload.get("generation", 0),
+        field="generation",
+        kind=_CHECKPOINT_KIND,
+        minimum=0,
+    )
+
+
 def validate_checkpoint(payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate and return an item checkpoint document."""
+    """Validate and return an item checkpoint document.
+
+    Schema-1 documents created before generation tracking are accepted and have
+    a logical generation of zero. Validation does not rewrite the source file.
+    """
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise StateValidationError(
             f"Unsupported checkpoint schema {payload.get('schema_version')!r}; "
             f"expected {SCHEMA_VERSION}"
         )
 
+    if "generation" in payload:
+        _generation(payload)
     require_timestamp(payload.get("created_at"), field="created_at", kind=_CHECKPOINT_KIND)
     require_timestamp(payload.get("updated_at"), field="updated_at", kind=_CHECKPOINT_KIND)
 
@@ -114,20 +133,43 @@ def validate_checkpoint(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-class CheckpointStore:
-    """A small JSON-backed store for item-level completion state.
+def _normalize_checkpoint(payload: dict[str, Any]) -> dict[str, Any]:
+    validate_checkpoint(payload)
+    if "generation" in payload:
+        return payload
+    normalized = dict(payload)
+    normalized["generation"] = 0
+    return normalized
 
-    The local backend is intentionally single-writer. Atomic replacement protects
-    against torn writes, but it does not serialize concurrent processes.
+
+class CheckpointStore:
+    """A JSON-backed store for item-level completion state.
+
+    Cooperating local writers serialize read-modify-write transactions with an
+    operating-system advisory lock. Every durable write also checks a monotonic
+    generation so stale in-memory snapshots fail with ``StateConflictError``
+    instead of silently replacing newer progress.
     """
 
-    def __init__(self, path: str | os.PathLike[str]):
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        lock_timeout: float = 10.0,
+    ) -> None:
         self.path = Path(path)
+        self.lock_timeout = float(lock_timeout)
+
+    @property
+    def lock_path(self) -> Path:
+        """Return the sidecar path used to coordinate cooperating writers."""
+        return lock_path_for(self.path)
 
     def _empty(self) -> dict[str, Any]:
         now = _now()
         return {
             "schema_version": SCHEMA_VERSION,
+            "generation": 0,
             "created_at": now,
             "updated_at": now,
             "completed": [],
@@ -135,18 +177,71 @@ class CheckpointStore:
             "item_metadata": {},
         }
 
-    def load(self) -> dict[str, Any]:
+    def _load_unlocked(self) -> dict[str, Any]:
         if not self.path.exists():
             return self._empty()
         payload = load_json_object(self.path, kind=_CHECKPOINT_KIND)
-        return validate_checkpoint(payload)
+        return _normalize_checkpoint(payload)
 
-    def save(self, payload: dict[str, Any]) -> None:
-        payload = dict(payload)
-        payload["schema_version"] = SCHEMA_VERSION
-        payload["updated_at"] = _now()
-        validate_checkpoint(payload)
-        atomic_write_json(self.path, payload)
+    def load(self) -> dict[str, Any]:
+        """Return validated state, normalizing legacy missing generation to zero."""
+        return self._load_unlocked()
+
+    def _write_next_unlocked(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_generation: int,
+    ) -> dict[str, Any]:
+        durable = self._load_unlocked()
+        actual_generation = durable["generation"]
+        if actual_generation != expected_generation:
+            raise StateConflictError(
+                f"State generation conflict for {self.path}: "
+                f"expected {expected_generation}, found {actual_generation}"
+            )
+
+        candidate = copy.deepcopy(payload)
+        candidate["schema_version"] = SCHEMA_VERSION
+        candidate["generation"] = expected_generation + 1
+        candidate["updated_at"] = _now()
+        validate_checkpoint(candidate)
+        atomic_write_json(self.path, candidate)
+        return candidate
+
+    def save(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_generation: int | None = None,
+    ) -> dict[str, Any]:
+        """Conditionally save *payload* and return the new durable state.
+
+        By default the generation present in *payload* is used as the expected
+        generation. Supplying ``expected_generation`` explicitly is useful when
+        callers keep the token separately. A stale token raises
+        ``StateConflictError`` without changing the durable document.
+        """
+        candidate = _normalize_checkpoint(copy.deepcopy(payload))
+        expected = candidate["generation"] if expected_generation is None else require_integer(
+            expected_generation,
+            field="expected_generation",
+            kind=_CHECKPOINT_KIND,
+            minimum=0,
+        )
+        with FileLock(self.lock_path, timeout=self.lock_timeout):
+            return self._write_next_unlocked(candidate, expected_generation=expected)
+
+    def _mutate(self, operation: Callable[[dict[str, Any]], tuple[bool, _T]]) -> _T:
+        with FileLock(self.lock_path, timeout=self.lock_timeout):
+            payload = self._load_unlocked()
+            changed, result = operation(payload)
+            if changed:
+                self._write_next_unlocked(
+                    payload,
+                    expected_generation=payload["generation"],
+                )
+            return result
 
     @staticmethod
     def _normalize_key(key: str) -> str:
@@ -161,12 +256,19 @@ class CheckpointStore:
         if metadata is not None and not isinstance(metadata, dict):
             raise StateValidationError("item metadata must be a JSON object")
 
-        payload = self.load()
-        if normalized not in payload["completed"]:
-            payload["completed"].append(normalized)
-        if metadata is not None:
-            payload["item_metadata"][normalized] = dict(metadata)
-        self.save(payload)
+        def operation(payload: dict[str, Any]) -> tuple[bool, None]:
+            changed = False
+            if normalized not in payload["completed"]:
+                payload["completed"].append(normalized)
+                changed = True
+            if metadata is not None:
+                item_metadata = dict(metadata)
+                if payload["item_metadata"].get(normalized) != item_metadata:
+                    payload["item_metadata"][normalized] = item_metadata
+                    changed = True
+            return changed, None
+
+        self._mutate(operation)
 
     def mark_incomplete(self, key: str) -> bool:
         """Remove a completion marker and associated item metadata.
@@ -174,18 +276,27 @@ class CheckpointStore:
         Returns ``True`` when an existing completion marker was removed.
         """
         normalized = self._normalize_key(key)
-        payload = self.load()
-        if normalized not in payload["completed"]:
-            return False
-        payload["completed"].remove(normalized)
-        payload["item_metadata"].pop(normalized, None)
-        self.save(payload)
-        return True
+
+        def operation(payload: dict[str, Any]) -> tuple[bool, bool]:
+            if normalized not in payload["completed"]:
+                return False, False
+            payload["completed"].remove(normalized)
+            payload["item_metadata"].pop(normalized, None)
+            return True, True
+
+        return self._mutate(operation)
 
     def set_metadata(self, **values: Any) -> None:
-        payload = self.load()
-        payload["metadata"].update(values)
-        self.save(payload)
+        def operation(payload: dict[str, Any]) -> tuple[bool, None]:
+            changed = any(
+                key not in payload["metadata"] or payload["metadata"][key] != value
+                for key, value in values.items()
+            )
+            if changed:
+                payload["metadata"].update(values)
+            return changed, None
+
+        self._mutate(operation)
 
     def completed_count(self) -> int:
         return len(self.load()["completed"])

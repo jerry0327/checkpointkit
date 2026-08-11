@@ -17,12 +17,14 @@ This roadmap describes priorities, not promises or dates. Changes should be driv
 - [x] Failure-injection fixtures for corruption and interrupted writes
 - [x] Package build and wheel-install smoke test
 
-## 0.2 — Safer coordination
+## 0.2 — Safer local coordination
 
 - [x] Specify local locking and stale-writer detection semantics
-- [ ] Add generation / compare-and-swap checks to detect stale writers
-- [ ] Add an advisory lock implementation for supported local filesystems
-- [ ] Define explicit behavior for unsupported network filesystems
+- [x] Add monotonic generation and compare-and-swap conflict checks
+- [x] Add advisory OS locks for supported local filesystems
+- [x] Hold a per-name lease across wrapped command execution
+- [x] Define and document unsupported network-filesystem behavior
+- [x] Test lock timeout, crashed-holder recovery, and concurrent progress on all CI platforms
 - [ ] Cleanup and retention policies for old attempts
 - [ ] Optional JSON Lines event history
 

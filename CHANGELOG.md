@@ -2,6 +2,32 @@
 
 All notable changes to CheckpointKit are documented here. The project follows semantic versioning, including pre-release identifiers while APIs and formats are still evolving.
 
+## [0.2.0a1] - 2026-08-12
+
+### Added
+
+- Monotonic `generation` tokens for item checkpoint and command run-state documents.
+- Conditional `CheckpointStore.save()` semantics that reject stale snapshots with `StateConflictError`.
+- Cross-platform advisory sidecar locks for cooperating local writers using only the Python standard library.
+- `LockTimeoutError`, exported as a specialized `StateConflictError`.
+- Per-run-name leases held for the lifetime of wrapped commands.
+- `lock_timeout` API parameters and CLI `--lock-timeout` options for `run` and `resume`.
+- A multiprocessing reference example and deterministic lock, crash-release, lost-update, and stale-writer tests.
+
+### Changed
+
+- Legacy schema-1 checkpoint and run-state documents without `generation` are read as generation `0` and upgraded lazily on their next successful write.
+- Idempotent item operations no longer perform unnecessary durable replacements or generation increments.
+- Human-readable command status now includes the durable generation.
+- Local coordination documentation now distinguishes tested cooperating-writer guarantees from unsupported distributed or network-filesystem behavior.
+
+### Fixed
+
+- Prevented cooperating processes from silently overwriting each other’s item progress.
+- Prevented a stale in-memory checkpoint payload from replacing a newer durable generation.
+- Prevented two cooperating wrappers from launching the same recorded run concurrently.
+- Detects a non-cooperating generation change before a terminal run-state overwrite.
+
 ## [0.1.0a1] - 2026-08-12
 
 ### Added

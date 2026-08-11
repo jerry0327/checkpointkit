@@ -15,11 +15,13 @@ def test_repository_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
     metadata = load_release_metadata(root)
 
-    assert metadata.version == "0.1.0a1"
-    assert metadata.tag == "v0.1.0a1"
+    assert metadata.version == "0.2.0a1"
+    assert metadata.tag == "v0.2.0a1"
     assert metadata.prerelease is True
-    assert "Strict validators" in metadata.changelog
-    assert "SHA256SUMS" in render_release_notes(metadata)
+    assert "generation" in metadata.changelog
+    notes = render_release_notes(metadata)
+    assert "SHA256SUMS" in notes
+    assert "advisory OS locks" in notes
 
 
 def test_release_metadata_rejects_version_disagreement(tmp_path):

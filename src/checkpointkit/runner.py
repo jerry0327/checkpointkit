@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 import socket
@@ -19,6 +20,7 @@ from ._validation import (
     require_timestamp,
 )
 from .errors import StateConflictError, StateValidationError
+from .locking import FileLock, lock_path_for
 from .store import atomic_write_json
 
 RUN_SCHEMA_VERSION = 1
@@ -43,6 +45,15 @@ def run_state_path(state_dir: str | os.PathLike[str], name: str) -> Path:
     return Path(state_dir) / "runs" / f"{_safe_name(name)}.json"
 
 
+def _generation(payload: dict[str, Any]) -> int:
+    return require_integer(
+        payload.get("generation", 0),
+        field="generation",
+        kind=_RUN_KIND,
+        minimum=0,
+    )
+
+
 def validate_run_state(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("schema_version") != RUN_SCHEMA_VERSION:
         raise StateValidationError(
@@ -50,6 +61,8 @@ def validate_run_state(payload: dict[str, Any]) -> dict[str, Any]:
             f"expected {RUN_SCHEMA_VERSION}"
         )
 
+    if "generation" in payload:
+        _generation(payload)
     require_string(payload.get("name"), field="name", kind=_RUN_KIND)
     command = require_list(payload.get("command"), field="command", kind=_RUN_KIND)
     if not command:
@@ -149,17 +162,49 @@ def validate_run_state(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _normalize_run_state(payload: dict[str, Any]) -> dict[str, Any]:
+    validate_run_state(payload)
+    if "generation" in payload:
+        return payload
+    normalized = dict(payload)
+    normalized["generation"] = 0
+    return normalized
+
+
+def _load_run_path(path: Path) -> dict[str, Any]:
+    payload = load_json_object(path, kind=_RUN_KIND)
+    return _normalize_run_state(payload)
+
+
 def load_run(state_dir: str | os.PathLike[str], name: str) -> dict[str, Any]:
     path = run_state_path(state_dir, name)
     if not path.exists():
         raise FileNotFoundError(f"No recorded run named {name!r}: {path}")
-    payload = load_json_object(path, kind=_RUN_KIND)
-    validate_run_state(payload)
+    payload = _load_run_path(path)
     if payload["name"] != name:
         raise StateValidationError(
             f"Run-state name {payload['name']!r} does not match requested name {name!r}"
         )
     return payload
+
+
+def _write_run_unlocked(path: Path, payload: dict[str, Any]) -> None:
+    actual_generation = _load_run_path(path)["generation"] if path.exists() else 0
+    expected_generation = payload["generation"]
+    if actual_generation != expected_generation:
+        raise StateConflictError(
+            f"State generation conflict for {path}: "
+            f"expected {expected_generation}, found {actual_generation}"
+        )
+
+    candidate = copy.deepcopy(payload)
+    candidate["schema_version"] = RUN_SCHEMA_VERSION
+    candidate["generation"] = expected_generation + 1
+    candidate["updated_at"] = _now()
+    validate_run_state(candidate)
+    atomic_write_json(path, candidate)
+    payload.clear()
+    payload.update(candidate)
 
 
 def _abandon_running_attempt(payload: dict[str, Any]) -> bool:
@@ -185,7 +230,9 @@ def run_command(
     state_dir: str | os.PathLike[str] = ".checkpointkit",
     cwd: str | os.PathLike[str] | None = None,
     force: bool = False,
+    lock_timeout: float = 10.0,
 ) -> int:
+    """Run a command while holding an OS-backed lease for its run name."""
     if not command:
         raise StateValidationError("Command cannot be empty")
 
@@ -195,80 +242,89 @@ def run_command(
         raise StateValidationError("Command executable cannot be empty")
     cwd_value = str(Path(cwd).resolve()) if cwd is not None else str(Path.cwd().resolve())
 
-    if path.exists():
-        payload = load_run(state_dir, name)
-        if payload["command"] != command_list:
-            raise StateConflictError(
-                "Recorded command differs from the requested command. "
-                "Use a different run name or remove the old run state."
-            )
-        if payload["cwd"] != cwd_value:
-            raise StateConflictError(
-                "Recorded working directory differs from the requested directory. "
-                "Use resume or a different run name."
-            )
-        if payload["status"] == "completed" and not force:
-            return 0
-        _abandon_running_attempt(payload)
-    else:
-        now = _now()
-        payload = {
-            "schema_version": RUN_SCHEMA_VERSION,
-            "name": name,
-            "command": command_list,
-            "cwd": cwd_value,
-            "created_at": now,
-            "updated_at": now,
-            "status": "new",
-            "attempts": [],
+    with FileLock(lock_path_for(path), timeout=lock_timeout):
+        if path.exists():
+            payload = _load_run_path(path)
+            if payload["name"] != name:
+                raise StateValidationError(
+                    f"Run-state name {payload['name']!r} does not match requested name {name!r}"
+                )
+            if payload["command"] != command_list:
+                raise StateConflictError(
+                    "Recorded command differs from the requested command. "
+                    "Use a different run name or remove the old run state."
+                )
+            if payload["cwd"] != cwd_value:
+                raise StateConflictError(
+                    "Recorded working directory differs from the requested directory. "
+                    "Use resume or a different run name."
+                )
+            if payload["status"] == "completed" and not force:
+                return 0
+            _abandon_running_attempt(payload)
+        else:
+            now = _now()
+            payload = {
+                "schema_version": RUN_SCHEMA_VERSION,
+                "generation": 0,
+                "name": name,
+                "command": command_list,
+                "cwd": cwd_value,
+                "created_at": now,
+                "updated_at": now,
+                "status": "new",
+                "attempts": [],
+            }
+
+        attempt: dict[str, Any] = {
+            "number": len(payload["attempts"]) + 1,
+            "started_at": _now(),
+            "finished_at": None,
+            "exit_code": None,
+            "status": "running",
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
         }
-
-    attempt: dict[str, Any] = {
-        "number": len(payload["attempts"]) + 1,
-        "started_at": _now(),
-        "finished_at": None,
-        "exit_code": None,
-        "status": "running",
-        "pid": os.getpid(),
-        "hostname": socket.gethostname(),
-    }
-    payload["attempts"].append(attempt)
-    payload["status"] = "running"
-    payload["updated_at"] = _now()
-    validate_run_state(payload)
-    atomic_write_json(path, payload)
-
-    try:
-        completed = subprocess.run(command_list, cwd=cwd_value, check=False)
-    except KeyboardInterrupt:
-        attempt["finished_at"] = _now()
-        attempt["status"] = "interrupted"
-        payload["status"] = "interrupted"
+        payload["attempts"].append(attempt)
+        payload["status"] = "running"
         payload["updated_at"] = _now()
         validate_run_state(payload)
-        atomic_write_json(path, payload)
-        raise
-    except BaseException as exc:
+        _write_run_unlocked(path, payload)
+        # The writer replaces payload with a deep-copied durable candidate, so
+        # refresh the nested attempt reference before recording the outcome.
+        attempt = payload["attempts"][-1]
+
+        try:
+            completed = subprocess.run(command_list, cwd=cwd_value, check=False)
+        except KeyboardInterrupt:
+            attempt["finished_at"] = _now()
+            attempt["status"] = "interrupted"
+            payload["status"] = "interrupted"
+            payload["updated_at"] = _now()
+            validate_run_state(payload)
+            _write_run_unlocked(path, payload)
+            raise
+        except BaseException as exc:
+            attempt["finished_at"] = _now()
+            attempt["status"] = "error"
+            attempt["error_type"] = type(exc).__name__
+            attempt["error_message"] = str(exc)
+            payload["status"] = "error"
+            payload["updated_at"] = _now()
+            validate_run_state(payload)
+            _write_run_unlocked(path, payload)
+            raise
+
         attempt["finished_at"] = _now()
-        attempt["status"] = "error"
-        attempt["error_type"] = type(exc).__name__
-        attempt["error_message"] = str(exc)
-        payload["status"] = "error"
+        attempt["exit_code"] = completed.returncode
+        attempt["status"] = "completed" if completed.returncode == 0 else "failed"
+        if completed.returncode < 0:
+            attempt["signal"] = -completed.returncode
+        payload["status"] = attempt["status"]
         payload["updated_at"] = _now()
         validate_run_state(payload)
-        atomic_write_json(path, payload)
-        raise
-
-    attempt["finished_at"] = _now()
-    attempt["exit_code"] = completed.returncode
-    attempt["status"] = "completed" if completed.returncode == 0 else "failed"
-    if completed.returncode < 0:
-        attempt["signal"] = -completed.returncode
-    payload["status"] = attempt["status"]
-    payload["updated_at"] = _now()
-    validate_run_state(payload)
-    atomic_write_json(path, payload)
-    return completed.returncode
+        _write_run_unlocked(path, payload)
+        return completed.returncode
 
 
 def resume_command(
@@ -276,6 +332,7 @@ def resume_command(
     *,
     state_dir: str | os.PathLike[str] = ".checkpointkit",
     force: bool = False,
+    lock_timeout: float = 10.0,
 ) -> int:
     payload = load_run(state_dir, name)
     return run_command(
@@ -284,6 +341,7 @@ def resume_command(
         state_dir=state_dir,
         cwd=payload["cwd"],
         force=force,
+        lock_timeout=lock_timeout,
     )
 
 
@@ -294,6 +352,5 @@ def list_runs(state_dir: str | os.PathLike[str] = ".checkpointkit") -> list[dict
         return []
     runs: list[dict[str, Any]] = []
     for path in sorted(runs_dir.glob("*.json")):
-        payload = load_json_object(path, kind=_RUN_KIND)
-        runs.append(validate_run_state(payload))
+        runs.append(_load_run_path(path))
     return sorted(runs, key=lambda item: item["name"])

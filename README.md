@@ -6,7 +6,7 @@
 
 CheckpointKit is a local-first Python toolkit for work that should survive ordinary interruptions without restarting from zero. It targets transcription, OCR, model evaluation, data conversion, scraping, media processing, and other batch pipelines that may run for minutes or hours.
 
-> **Status: alpha (`0.1.0a1`).** The core recovery behavior is tested, but the public API and durable JSON formats may still change before 1.0.
+> **Status: alpha (`0.2.0a1`).** Local coordination is tested on supported CI platforms, but the public API and durable JSON formats may still change before 1.0.
 
 ## Why CheckpointKit
 
@@ -17,7 +17,9 @@ CheckpointKit provides small, inspectable primitives rather than a hidden schedu
 - atomic, human-readable JSON checkpoint state;
 - strict validation that fails closed on malformed or unsupported state;
 - item-level completion tracking for resumable batches;
-- command attempt history with stale `running` attempts marked `abandoned` on resume;
+- monotonic generations that reject stale in-memory writes;
+- cross-platform advisory locks for cooperating writers on ordinary local filesystems;
+- command attempt history with a per-run lease and stale-attempt recovery;
 - artifact snapshots with SHA-256 verification and optional exact-file checks;
 - stable CLI errors suitable for scripts and operators;
 - a dependency-free runtime core with typed public APIs.
@@ -51,7 +53,14 @@ checkpointkit list
 checkpointkit resume --name transcribe
 ```
 
-A completed command is not rerun unless `--force` is supplied. If a prior process disappeared while an attempt was recorded as `running`, the next run or resume preserves that attempt as `abandoned` before starting a new attempt.
+A run-name lease is held for the lifetime of the wrapped command. A second cooperating wrapper using the same state directory and name waits up to 10 seconds by default, then exits with an error. Set an intentional timeout when needed:
+
+```bash
+checkpointkit run --name transcribe --lock-timeout 30 -- python pipeline.py
+checkpointkit resume --name transcribe --lock-timeout 30
+```
+
+A completed command is not rerun unless `--force` is supplied. If a prior wrapper disappeared while an attempt was recorded as `running`, the next lease holder preserves that attempt as `abandoned` before starting a new attempt.
 
 Snapshot output artifacts and verify them later:
 
@@ -67,6 +76,8 @@ Normal verification checks every recorded file for existence, byte size, and SHA
 `resume` reruns the recorded command. Fine-grained recovery comes from the workload itself recording meaningful progress with `CheckpointStore`.
 
 ## Python API
+
+The high-level item methods acquire a sidecar OS lock, reload current state, apply one mutation, and atomically install the next generation:
 
 ```python
 from checkpointkit import CheckpointStore
@@ -89,31 +100,59 @@ store.mark_incomplete("item-17")
 pending = store.pending_keys(["item-16", "item-17", "item-18"])
 ```
 
-Checkpoint writes use a temporary file in the destination directory, flush and fsync it, then replace the old state with `os.replace`. If serialization or replacement fails, the previous valid checkpoint remains in place and the temporary file is removed.
+For a custom read-modify-write operation, the payload returned by `load()` includes the observed generation. `save()` uses that value as a compare-and-swap token and returns the newly written state:
+
+```python
+from checkpointkit import StateConflictError
+
+payload = store.load()
+payload["metadata"]["model"] = "example-v2"
+
+try:
+    saved = store.save(payload)
+    print(saved["generation"])
+except StateConflictError:
+    # Another writer committed first. Reload and deliberately reapply the change.
+    raise
+```
+
+Legacy schema-1 checkpoint and run-state documents without `generation` remain readable as generation `0`. A read alone does not rewrite them; the next successful write stores generation `1`.
+
+Checkpoint writes use a temporary file in the destination directory, flush and fsync it, then replace the old state with `os.replace`. If serialization, replacement, lock acquisition, or generation validation fails, a newer valid checkpoint is not silently overwritten.
 
 ## Failure and security model
 
-CheckpointKit rejects truncated JSON, unsupported schema versions, invalid field types, duplicate completion keys, duplicate manifest paths, unsafe artifact paths, and inconsistent run-attempt state. Artifact records cannot use absolute paths, drive prefixes, backslashes, or `..`, and symlink resolution cannot escape the declared base directory.
+CheckpointKit rejects truncated JSON, unsupported schema versions, invalid field types, duplicate completion keys, duplicate manifest paths, unsafe artifact paths, inconsistent run attempts, and stale generation tokens. Artifact records cannot use absolute paths, drive prefixes, backslashes, or `..`, and symlink resolution cannot escape the declared base directory.
 
-Checkpoint files can still contain sensitive command lines, paths, identifiers, and metadata. Treat them as operational records, not public logs. See [`docs/failure-model.md`](docs/failure-model.md) and [`SECURITY.md`](SECURITY.md).
+Checkpoint files and lock sidecars can reveal command lines, paths, identifiers, and operational timing. Treat the state directory as sensitive operational data. See [`docs/failure-model.md`](docs/failure-model.md), [`docs/concurrency.md`](docs/concurrency.md), and [`SECURITY.md`](SECURITY.md).
 
 ## What CheckpointKit is not
 
 CheckpointKit is **not** operating-system process-memory checkpoint/restore. It does not freeze an arbitrary program and continue at the exact CPU instruction where it stopped. It provides application- and workflow-level recovery primitives; the workload defines what “completed” means.
 
-The local backend remains single-writer. Atomic replacement prevents torn documents but does not provide transaction isolation between concurrent writers. The accepted coordination design is documented in [`docs/concurrency.md`](docs/concurrency.md).
+Local coordination applies only to **cooperating CheckpointKit writers on tested ordinary local filesystems**. Advisory locks can be bypassed, and network filesystems or object-store mounts may have different lock and rename semantics. CheckpointKit does not claim distributed transactions or exactly-once execution of arbitrary external side effects.
+
+A command can finish its external work and then lose power before its terminal status is written. Use idempotency keys or a domain-specific transaction protocol for irreversible external operations.
 
 ## Platform support
 
-CI is configured to exercise the core suite on Python 3.10–3.14 on Linux and Python 3.14 on current Windows and macOS hosted runners. Platform-specific filesystem behavior is documented instead of being assumed identical.
+CI exercises the complete suite on Python 3.10–3.14 on Linux and Python 3.14 on current Windows and macOS hosted runners. The same generation, lock-timeout, process-exit, and stale-writer semantics are tested across those platforms. Unsupported filesystem behavior is documented rather than assumed equivalent.
 
-## Example
+## Examples
 
-See [`examples/resumable_batch.py`](examples/resumable_batch.py). Interrupt it and rerun it; completed items are skipped.
+Interrupt and rerun the basic batch example; completed items are skipped:
 
 ```bash
 python examples/resumable_batch.py
 ```
+
+Run several cooperating processes against one checkpoint and inspect the merged generation history:
+
+```bash
+python examples/concurrent_workers.py
+```
+
+The concurrency example demonstrates durable progress coordination, not exactly-once application side effects.
 
 ## Development
 

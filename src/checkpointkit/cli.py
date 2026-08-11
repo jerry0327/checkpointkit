@@ -34,12 +34,24 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--state-dir", default=".checkpointkit")
     run_parser.add_argument("--cwd", default=None)
     run_parser.add_argument("--force", action="store_true", help="Rerun even if already completed")
+    run_parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait for the run-name lease (default: 10)",
+    )
     run_parser.add_argument("command", nargs=argparse.REMAINDER)
 
     resume_parser = subparsers.add_parser("resume", help="Rerun a previously recorded command")
     resume_parser.add_argument("--name", required=True)
     resume_parser.add_argument("--state-dir", default=".checkpointkit")
     resume_parser.add_argument("--force", action="store_true")
+    resume_parser.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=10.0,
+        help="Seconds to wait for the run-name lease (default: 10)",
+    )
 
     status_parser = subparsers.add_parser("status", help="Inspect a recorded command run")
     status_parser.add_argument("--name", required=True)
@@ -82,10 +94,16 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             state_dir=args.state_dir,
             cwd=args.cwd,
             force=args.force,
+            lock_timeout=args.lock_timeout,
         )
 
     if args.subcommand == "resume":
-        return resume_command(args.name, state_dir=args.state_dir, force=args.force)
+        return resume_command(
+            args.name,
+            state_dir=args.state_dir,
+            force=args.force,
+            lock_timeout=args.lock_timeout,
+        )
 
     if args.subcommand == "status":
         payload = load_run(args.state_dir, args.name)
@@ -95,6 +113,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             attempts = payload["attempts"]
             print(f"name: {payload['name']}")
             print(f"status: {payload['status']}")
+            print(f"generation: {payload['generation']}")
             print(f"attempts: {len(attempts)}")
             print(f"command: {' '.join(payload['command'])}")
         return 0
