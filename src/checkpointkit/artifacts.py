@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 from .store import atomic_write_json
 
