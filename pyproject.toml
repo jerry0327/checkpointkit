@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "checkpointkit"
+version = "0.1.0a0"
+description = "Fault-tolerant checkpointing and resume toolkit for long-running AI, data, and batch jobs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [{name = "CheckpointKit contributors"}]
+keywords = ["checkpoint", "resume", "batch", "recovery", "ai", "data-pipeline"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Recovery Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/jerry0327/checkpointkit"
+Issues = "https://github.com/jerry0327/checkpointkit/issues"
+Repository = "https://github.com/jerry0327/checkpointkit"
+
+[project.scripts]
+checkpointkit = "checkpointkit.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
