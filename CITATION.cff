@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If CheckpointKit contributes to published work, cite the software release and repository."
+title: "CheckpointKit"
+type: software
+authors:
+  - name: "CheckpointKit contributors"
+version: 0.3.0
+date-released: 2026-08-12
+repository-code: "https://github.com/jerry0327/checkpointkit"
+url: "https://github.com/jerry0327/checkpointkit"
+license: Apache-2.0
+keywords:
+  - checkpointing
+  - fault tolerance
+  - workflow recovery
+  - batch processing
+  - data pipelines
+  - AI infrastructure
+abstract: >-
+  A local-first Python toolkit for durable item checkpoints, command attempt
+  history, resumable workflows, and artifact integrity verification.

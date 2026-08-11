@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: release-${{ github.event.workflow_run.head_sha }}
@@ -60,6 +63,14 @@ jobs:
           python -m pip install build
           python -m build
           (cd dist && sha256sum checkpointkit-* > SHA256SUMS)
+      - name: Generate build provenance
+        if: steps.metadata.outputs.publish == 'true'
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/checkpointkit-*.whl
+            dist/checkpointkit-*.tar.gz
+            dist/SHA256SUMS
       - name: Create GitHub release
         if: steps.metadata.outputs.publish == 'true'
         env:

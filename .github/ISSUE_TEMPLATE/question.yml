@@ -1,0 +1,52 @@
+name: Usage question
+description: Ask for help applying CheckpointKit to a concrete workflow.
+title: "question: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provide a minimal, sanitized example. Do not include credentials or sensitive data.
+  - type: input
+    id: version
+    attributes:
+      label: CheckpointKit version
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python, operating system, and filesystem
+      placeholder: Python 3.12, Ubuntu 24.04, ext4
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Workflow goal
+      description: What work needs to survive interruption or resume safely?
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Minimal example
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question and observed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, private data, and sensitive file contents.
+          required: true
+        - label: I reviewed the documented failure and concurrency boundaries.
+          required: true

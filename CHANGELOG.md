@@ -1,6 +1,29 @@
 # Changelog
 
-All notable changes to CheckpointKit are documented here. The project follows semantic versioning, including pre-release identifiers while APIs and formats are still evolving.
+All notable changes to CheckpointKit are documented here. The project follows semantic versioning. Releases below 1.0 may evolve APIs and durable formats with explicit compatibility notes.
+
+## [0.3.0] - 2026-08-12
+
+### Added
+
+- A deterministic, fully offline crash-and-resume reference workload that terminates a real child process after a controlled number of durable commits.
+- A machine-readable recovery report with a committed JSON Schema, runtime metadata, checkpoint generation history, duplicate-processing evidence, elapsed times, and artifact verification results.
+- Dedicated Linux, Windows, and macOS recovery CI jobs that upload evidence bundles and block the package gate on failure.
+- CodeQL security analysis on pull requests, main-branch pushes, and a weekly schedule.
+- GitHub OIDC/Sigstore build provenance attestations for release artifacts and checksums.
+- Architecture, recovery-evidence, project-evidence, governance, support, and citation documentation.
+- A structured usage-question issue form.
+
+### Changed
+
+- Development status advanced from alpha to beta while remaining explicitly pre-1.0.
+- Release verification documentation now covers SHA-256 checksums and GitHub attestations.
+- The package gate now depends on the complete test matrix and real recovery evidence from all supported operating systems.
+- Source distributions now include governance, support, citation metadata, and JSON documentation schemas.
+
+### Claim boundaries
+
+- This release does not claim broad adoption, package-index downloads, external contributors, production deployments, distributed locking, process-memory restoration, or exactly-once arbitrary external side effects without independent evidence.
 
 ## [0.2.0a1] - 2026-08-12
 

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jerry0327/checkpointkit/blob/main/docs/recovery-report.schema.json",
+  "title": "CheckpointKit recovery evidence report",
+  "description": "Machine-readable evidence produced by the deterministic crash-and-resume reference workload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scenario",
+    "total_items",
+    "controlled_interrupt_after",
+    "interrupted_exit_code",
+    "items_completed_before_interruption",
+    "items_skipped_on_resume",
+    "items_processed_after_resume",
+    "duplicate_processing_count",
+    "duplicate_committed_items",
+    "attempted_more_than_once",
+    "checkpoint_generation_history",
+    "final_checkpoint_generation",
+    "artifact_verification",
+    "elapsed_seconds",
+    "runtime",
+    "evidence",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "scenario": {"const": "local-child-process-crash-and-resume"},
+    "total_items": {"type": "integer", "minimum": 2},
+    "controlled_interrupt_after": {"type": "integer", "minimum": 1},
+    "interrupted_exit_code": {"type": "integer", "not": {"const": 0}},
+    "items_completed_before_interruption": {"type": "integer", "minimum": 1},
+    "items_skipped_on_resume": {"type": "integer", "minimum": 1},
+    "items_processed_after_resume": {"type": "integer", "minimum": 1},
+    "duplicate_processing_count": {"type": "integer", "minimum": 0},
+    "duplicate_committed_items": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "attempted_more_than_once": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "checkpoint_generation_history": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"type": "integer", "minimum": 1},
+      "uniqueItems": true
+    },
+    "final_checkpoint_generation": {"type": "integer", "minimum": 2},
+    "artifact_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean_ok",
+        "recovered_ok",
+        "equivalent_to_clean_run",
+        "clean_problems",
+        "recovered_problems"
+      ],
+      "properties": {
+        "clean_ok": {"type": "boolean"},
+        "recovered_ok": {"type": "boolean"},
+        "equivalent_to_clean_run": {"type": "boolean"},
+        "clean_problems": {"type": "array", "items": {"type": "string"}},
+        "recovered_problems": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "elapsed_seconds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clean", "initial_before_termination", "resumed"],
+      "properties": {
+        "clean": {"type": "number", "minimum": 0},
+        "initial_before_termination": {"type": "number", "minimum": 0},
+        "resumed": {"type": "number", "minimum": 0}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["implementation", "platform", "python"],
+      "properties": {
+        "implementation": {"type": "string", "minLength": 1},
+        "platform": {"type": "string", "minLength": 1},
+        "python": {"type": "string", "minLength": 1}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean_manifest",
+        "recovered_checkpoint",
+        "recovered_events",
+        "recovered_manifest"
+      ],
+      "properties": {
+        "clean_manifest": {"type": "string", "minLength": 1},
+        "recovered_checkpoint": {"type": "string", "minLength": 1},
+        "recovered_events": {"type": "string", "minLength": 1},
+        "recovered_manifest": {"type": "string", "minLength": 1}
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  }
+}

@@ -15,13 +15,14 @@ def test_repository_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
     metadata = load_release_metadata(root)
 
-    assert metadata.version == "0.2.0a1"
-    assert metadata.tag == "v0.2.0a1"
-    assert metadata.prerelease is True
-    assert "generation" in metadata.changelog
+    assert metadata.version == "0.3.0"
+    assert metadata.tag == "v0.3.0"
+    assert metadata.prerelease is False
+    assert "crash-and-resume" in metadata.changelog
     notes = render_release_notes(metadata)
     assert "SHA256SUMS" in notes
-    assert "advisory OS locks" in notes
+    assert "build provenance attestations" in notes
+    assert "cross-platform test and crash-recovery matrices" in notes
 
 
 def test_release_metadata_rejects_version_disagreement(tmp_path):
@@ -66,3 +67,4 @@ def test_render_release_notes_handles_stable_version():
     notes = render_release_notes(metadata)
     assert notes.startswith("# CheckpointKit v1.0.0")
     assert "- stable" in notes
+    assert "gh release verify v1.0.0" in notes

@@ -43,7 +43,7 @@ def read_project_version(root: Path) -> str:
     except (KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         raise ReleaseMetadataError("pyproject.toml has no valid project.version") from exc
     if not isinstance(version, str) or not version.strip():
-        raise ReleaseMetadataError("pyproject.toml project.version must be a non-empty string")
+        raise ReleaseMetadataError,"pyproject.toml project.version must be a non-empty string")
     return version.strip()
 
 
@@ -108,8 +108,13 @@ def render_release_notes(metadata: ReleaseMetadata) -> str:
         f"{metadata.changelog}\n\n"
         "## Distribution verification\n\n"
         "This release attaches a Python wheel, a source distribution, and `SHA256SUMS`. "
-        "It was created only after the corresponding `main` commit passed the repository's "
-        "lint, cross-platform test, coverage, and package-install gates.\n\n"
+        "GitHub Actions also records OIDC/Sigstore build provenance attestations for the "
+        "release files. It was created only after the corresponding `main` commit passed "
+        "lint, CodeQL, the cross-platform test and crash-recovery matrices, branch coverage, "
+        "and package-install gates.\n\n"
+        "Verify the release with `gh release verify "
+        f"{metadata.tag} -R jerry0327/checkpointkit` or verify an individual downloaded file "
+        "with `gh attestation verify FILE --repo jerry0327/checkpointkit`.\n\n"
         "CheckpointKit remains application/workflow-level recovery software. Local-file "
         "coordination covers cooperating processes on tested ordinary local filesystems via "
         "advisory OS locks and generation checks. Distributed/network-filesystem coordination "
