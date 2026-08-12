@@ -38,11 +38,12 @@ Releases require:
 
 - aligned package, source, intent, and changelog versions;
 - green lint, cross-platform test, recovery, coverage, and package gates;
-- release artifacts built from the exact verified `main` commit;
+- a reviewed CodeQL result for the release tree;
+- artifacts built from the exact verified `main` commit;
 - SHA-256 checksums and build provenance attestations;
 - documented limitations and compatibility notes.
 
-The release workflow prevents duplicate tags and refuses to publish from an outdated `main` commit.
+The automated release workflow enforces the CI/package conditions and prevents duplicate tags or publication from an outdated `main` commit. CodeQL is reviewed independently before merge because it runs as a separate security workflow.
 
 ## Security
 
