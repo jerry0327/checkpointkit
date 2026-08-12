@@ -1,50 +1,61 @@
 # CheckpointKit
 
 [![CI](https://github.com/jerry0327/checkpointkit/actions/workflows/ci.yml/badge.svg)](https://github.com/jerry0327/checkpointkit/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/jerry0327/checkpointkit/actions/workflows/codeql.yml/badge.svg)](https://github.com/jerry0327/checkpointkit/actions/workflows/codeql.yml)
 
-**Fault-tolerant checkpointing and resume primitives for long-running AI, data, and batch jobs.**
+**Crash-resilient, local-first checkpointing and resume primitives for long-running AI, data, and batch jobs.**
 
-CheckpointKit is a local-first Python toolkit for work that should survive ordinary interruptions without restarting from zero. It targets transcription, OCR, model evaluation, data conversion, scraping, media processing, and other batch pipelines that may run for minutes or hours.
+CheckpointKit gives Python workloads an explicit recovery layer without requiring a distributed scheduler. It records durable item progress, command-attempt history, and artifact integrity so an interrupted process can be inspected and restarted without blindly repeating completed work.
 
-> **Status: alpha (`0.2.0a1`).** Local coordination is tested on supported CI platforms, but the public API and durable JSON formats may still change before 1.0.
+Typical workloads include transcription, OCR, model evaluation, dataset conversion, scraping, media processing, local agent pipelines, and other jobs that may run for minutes or hours.
 
-## Why CheckpointKit
+> **Current release: `0.3.0` (beta).** The documented local recovery contract is tested across Linux, Windows, and macOS. APIs and durable formats remain pre-1.0 and may evolve with documented migration notes.
 
-Long-running jobs fail for routine reasons: a runner is reclaimed, a notebook disconnects, a process crashes, a machine reboots, or one input is malformed. Without durable progress metadata, recovery becomes guesswork and completed work gets repeated.
+## Core capabilities
 
-CheckpointKit provides small, inspectable primitives rather than a hidden scheduler:
-
-- atomic, human-readable JSON checkpoint state;
-- strict validation that fails closed on malformed or unsupported state;
-- item-level completion tracking for resumable batches;
-- monotonic generations that reject stale in-memory writes;
-- cross-platform advisory locks for cooperating writers on ordinary local filesystems;
-- command attempt history with a per-run lease and stale-attempt recovery;
-- artifact snapshots with SHA-256 verification and optional exact-file checks;
-- stable CLI errors suitable for scripts and operators;
-- a dependency-free runtime core with typed public APIs.
-
-The intended workflow is:
+- atomic, validated JSON checkpoint state;
+- item-level completion tracking and rollback;
+- monotonic generations with stale-writer detection;
+- advisory locks for cooperating local writers;
+- per-run-name leases and ordered command attempt history;
+- stale-attempt recovery after unclean process exit;
+- artifact snapshots with SHA-256 and exact verification;
+- stable CLI errors and typed Python APIs;
+- a dependency-free runtime core.
 
 ```text
-run -> checkpoint -> interruption -> inspect -> resume -> verify
+run → checkpoint → interruption → inspect → resume → verify
 ```
 
-## Install for development
+## Install
 
-CheckpointKit is not published to PyPI yet. Install the current source tree with Python 3.10 or newer:
+Install the verified GitHub release wheel:
+
+```bash
+python -m pip install \
+  https://github.com/jerry0327/checkpointkit/releases/download/v0.3.0/checkpointkit-0.3.0-py3-none-any.whl
+```
+
+Or install the tagged source:
+
+```bash
+python -m pip install \
+  "checkpointkit @ git+https://github.com/jerry0327/checkpointkit.git@v0.3.0"
+```
+
+For development:
 
 ```bash
 git clone https://github.com/jerry0327/checkpointkit.git
 cd checkpointkit
 python -m venv .venv
-# Activate .venv for your shell, then:
+# Activate .venv, then:
 python -m pip install -e ".[dev]"
 ```
 
-## CLI
+Python 3.10 through 3.14 is supported.
 
-Wrap a command and record durable attempt metadata:
+## CLI
 
 ```bash
 checkpointkit run --name transcribe -- python pipeline.py
@@ -53,31 +64,26 @@ checkpointkit list
 checkpointkit resume --name transcribe
 ```
 
-A run-name lease is held for the lifetime of the wrapped command. A second cooperating wrapper using the same state directory and name waits up to 10 seconds by default, then exits with an error. Set an intentional timeout when needed:
+A completed command is not rerun unless `--force` is supplied. A per-name lease is held for the child process lifetime. Lock wait is configurable:
 
 ```bash
-checkpointkit run --name transcribe --lock-timeout 30 -- python pipeline.py
-checkpointkit resume --name transcribe --lock-timeout 30
+checkpointkit run \
+  --name transcribe \
+  --lock-timeout 30 \
+  -- python pipeline.py
 ```
 
-A completed command is not rerun unless `--force` is supplied. If a prior wrapper disappeared while an attempt was recorded as `running`, the next lease holder preserves that attempt as `abandoned` before starting a new attempt.
-
-Snapshot output artifacts and verify them later:
+Snapshot and verify outputs:
 
 ```bash
 checkpointkit snapshot output/ --manifest artifacts.json
 checkpointkit verify artifacts.json
-checkpointkit verify artifacts.json --exact
 checkpointkit verify artifacts.json --exact --json
 ```
 
-Normal verification checks every recorded file for existence, byte size, and SHA-256 digest. `--exact` also reports files added beneath the original snapshot roots.
-
-`resume` reruns the recorded command. Fine-grained recovery comes from the workload itself recording meaningful progress with `CheckpointStore`.
+Normal verification checks recorded files for existence, byte size, and SHA-256 digest. `--exact` also reports files added beneath the original snapshot roots.
 
 ## Python API
-
-The high-level item methods acquire a sidecar OS lock, reload current state, apply one mutation, and atomically install the next generation:
 
 ```python
 from checkpointkit import CheckpointStore
@@ -93,84 +99,70 @@ for item in inputs:
     store.mark_complete(key, {"output": f"out/{key}.json"})
 ```
 
-Additional helpers support rollback and scheduling:
+High-level operations lock, reload, mutate, validate, and atomically install the next generation. Explicit read-modify-write callers can use `load()` and conditional `save()`; a stale generation raises `StateConflictError` rather than replacing newer progress.
 
-```python
-store.mark_incomplete("item-17")
-pending = store.pending_keys(["item-16", "item-17", "item-18"])
-```
+## Reproducible crash-and-resume evidence
 
-For a custom read-modify-write operation, the payload returned by `load()` includes the observed generation. `save()` uses that value as a compare-and-swap token and returns the newly written state:
-
-```python
-from checkpointkit import StateConflictError
-
-payload = store.load()
-payload["metadata"]["model"] = "example-v2"
-
-try:
-    saved = store.save(payload)
-    print(saved["generation"])
-except StateConflictError:
-    # Another writer committed first. Reload and deliberately reapply the change.
-    raise
-```
-
-Legacy schema-1 checkpoint and run-state documents without `generation` remain readable as generation `0`. A read alone does not rewrite them; the next successful write stores generation `1`.
-
-Checkpoint writes use a temporary file in the destination directory, flush and fsync it, then replace the old state with `os.replace`. If serialization, replacement, lock acquisition, or generation validation fails, a newer valid checkpoint is not silently overwritten.
-
-## Failure and security model
-
-CheckpointKit rejects truncated JSON, unsupported schema versions, invalid field types, duplicate completion keys, duplicate manifest paths, unsafe artifact paths, inconsistent run attempts, and stale generation tokens. Artifact records cannot use absolute paths, drive prefixes, backslashes, or `..`, and symlink resolution cannot escape the declared base directory.
-
-Checkpoint files and lock sidecars can reveal command lines, paths, identifiers, and operational timing. Treat the state directory as sensitive operational data. See [`docs/failure-model.md`](docs/failure-model.md), [`docs/concurrency.md`](docs/concurrency.md), and [`SECURITY.md`](SECURITY.md).
-
-## What CheckpointKit is not
-
-CheckpointKit is **not** operating-system process-memory checkpoint/restore. It does not freeze an arbitrary program and continue at the exact CPU instruction where it stopped. It provides application- and workflow-level recovery primitives; the workload defines what “completed” means.
-
-Local coordination applies only to **cooperating CheckpointKit writers on tested ordinary local filesystems**. Advisory locks can be bypassed, and network filesystems or object-store mounts may have different lock and rename semantics. CheckpointKit does not claim distributed transactions or exactly-once execution of arbitrary external side effects.
-
-A command can finish its external work and then lose power before its terminal status is written. Use idempotency keys or a domain-specific transaction protocol for irreversible external operations.
-
-## Platform support
-
-CI exercises the complete suite on Python 3.10–3.14 on Linux and Python 3.14 on current Windows and macOS hosted runners. The same generation, lock-timeout, process-exit, and stale-writer semantics are tested across those platforms. Unsupported filesystem behavior is documented rather than assumed equivalent.
-
-## Examples
-
-Interrupt and rerun the basic batch example; completed items are skipped:
+The repository includes an offline scenario that performs a real child-process termination:
 
 ```bash
-python examples/resumable_batch.py
+python examples/crash_resume_demo.py \
+  --workspace .checkpointkit-demo \
+  --reset
 ```
 
-Run several cooperating processes against one checkpoint and inspect the merged generation history:
+It performs an uninterrupted clean run, terminates an equivalent worker after exactly five durable commits, resumes in a new process, verifies committed items were skipped, completes the remaining items, and compares exact SHA-256 manifests.
+
+The report records committed, skipped, resumed, and duplicate counts; generation history; runtimes; evidence paths; and artifact verification. See:
+
+- [`docs/recovery-demo.md`](docs/recovery-demo.md)
+- [`docs/recovery-report.schema.json`](docs/recovery-report.schema.json)
+
+CI runs this scenario independently on Linux, Windows, and macOS and uploads each evidence bundle. The package gate depends on all recovery jobs.
+
+## Guarantees and boundaries
+
+CheckpointKit is **workflow/application-level recovery software**. It does not restore process memory or continue at the exact CPU instruction where execution stopped.
+
+Local coordination applies to cooperating CheckpointKit processes on ordinary local filesystems exercised by CI. Advisory locks can be bypassed. NFS, SMB, synchronized folders, object-store mounts, distributed workers, hostile writers, and exactly-once arbitrary external side effects are not claimed.
+
+A command may complete remote work and lose power before terminal local state is written. Use idempotency keys or domain transactions for irreversible external operations.
+
+Read the contracts:
+
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/failure-model.md`](docs/failure-model.md)
+- [`docs/concurrency.md`](docs/concurrency.md)
+- [`docs/checkpoint-format.md`](docs/checkpoint-format.md)
+
+## Quality and release evidence
+
+Every release is gated by Ruff and bytecode compilation, branch-aware coverage of at least 90%, Python 3.10–3.14 testing on Linux, current Python testing on Windows and macOS, the three-platform crash-and-resume matrix, package builds, and clean wheel installation.
+
+CodeQL runs independently on pull requests, main-branch pushes, and a weekly schedule. Release assets include SHA-256 checksums and GitHub build provenance attestations.
 
 ```bash
-python examples/concurrent_workers.py
+gh release verify v0.3.0 -R jerry0327/checkpointkit
+gh attestation verify checkpointkit-0.3.0-py3-none-any.whl \
+  --repo jerry0327/checkpointkit
 ```
 
-The concurrency example demonstrates durable progress coordination, not exactly-once application side effects.
+The release workflow checks out the exact successful `main` commit, refuses to publish if `main` has advanced, and never overwrites an existing tag.
 
-## Development
+## Project status
 
-```bash
-python -m pip install -e ".[dev]"
-ruff check .
-pytest --cov=checkpointkit --cov-report=term-missing --cov-branch
-python -m build
-```
+CheckpointKit is an early open-source project. It does not claim broad adoption, production deployments, external contributors, or download volume without independent evidence. Reproducible engineering facts and future adoption goals are separated in [`docs/project-evidence.md`](docs/project-evidence.md).
 
-The test suite enforces at least 90% branch-aware coverage in CI.
+## Contributing and governance
 
-## Roadmap and contributing
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`GOVERNANCE.md`](GOVERNANCE.md)
+- [`SUPPORT.md`](SUPPORT.md)
+- [`SECURITY.md`](SECURITY.md)
+- [`ROADMAP.md`](ROADMAP.md)
 
-Current priorities are in [`ROADMAP.md`](ROADMAP.md). Bug reports, focused proposals, documentation fixes, tests, and pull requests are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/design.md`](docs/design.md).
+AI-assisted contributions are reviewed under the same correctness, licensing, security, and testing standards as other contributions.
 
-Security-sensitive reports should follow [`SECURITY.md`](SECURITY.md).
+## License and citation
 
-## License
-
-Apache License 2.0. See [`LICENSE`](LICENSE).
+Apache License 2.0. See [`LICENSE`](LICENSE). Citation metadata is in [`CITATION.cff`](CITATION.cff).

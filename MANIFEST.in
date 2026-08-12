@@ -1,7 +1,10 @@
 include CHANGELOG.md
+include CITATION.cff
 include CODE_OF_CONDUCT.md
 include CONTRIBUTING.md
+include GOVERNANCE.md
 include ROADMAP.md
 include SECURITY.md
-recursive-include docs *.md
+include SUPPORT.md
+recursive-include docs *.md *.json
 recursive-include examples *.py
